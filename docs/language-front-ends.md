@@ -30,10 +30,15 @@ Korean and Mandarin need (`ɕ ʑ tɕ dʑ tʂ dʐ ɥ`, step 3), aspiration as the
 | Cyrillic | Russian | nothing: spelling rules, stress marked with an acute ([russian.md](russian.md)) | `phonetics/russian.rs` |
 | Han | Mandarin | `public/data/mandarin.txt.gz` (208 KB, fetched when lyrics have Han characters) | `phonetics/mandarin.rs` |
 | Latin with tones | Mandarin as pinyin | nothing (checked against Mandarin's 411 syllables) | `phonetics/mandarin.rs` (`Pinyin`) |
+| Latin, when chosen | Turkish | nothing: spelling rules, stress by rule ([turkish.md](turkish.md)) | `phonetics/turkish.rs` |
 
 The router (`read_lyrics` in `syllables.rs`) sends each word to the front end whose script it is
 in, so a line can mix them (`我爱你 hello 빵야 nǐhǎo`). It also handles what every language
 shares: melisma marks (`-`, `~`), phrase punctuation (ASCII and full-width `，。！？`) and word ends.
+
+Script can't tell Latin-script languages apart, so the player chooses which front end reads Latin
+script: English unless Turkish is chosen (`Lang` in `syllables.rs`; EN/TR in Speak and Sing).
+Toned pinyin and the other scripts are routed as before whichever is chosen.
 
 Pinyin and English share the Latin alphabet, so a front end may **decline** a word it scanned
 (`FrontEnd::claims`). The others then read that word as they would without it, and the one that
@@ -41,8 +46,8 @@ declined can't claim a piece of it: `café` stays English's "caf" rather than "c
 "é". Characters no front end claims are skipped, as on main: `Zürich` sings "Z rich". Nothing after
 them is lost.
 
-`chimera syllables "<lyrics>"` prints what the front ends read, one JSON syllable per sung note:
-the quickest way to check a front end.
+`chimera syllables "<lyrics>" [en|tr]` prints what the front ends read, one JSON syllable per sung
+note: the quickest way to check a front end.
 
 ## Korean
 
@@ -50,6 +55,10 @@ One Hangul block is one note, and the block keeps its spelling as the note's tex
 the front end applies standard Seoul sound rules: a coda moves onto a following silent ㅇ (먹어 →
 머거), codas neutralise, obstruents nasalise before nasals (국물 → 궁물), ㄴ and ㄹ meet as [ll],
 ㅎ aspirates its neighbour (좋다 → 조타), and obstruents tense after an obstruent coda.
+
+A block typed as its letters (conjoining jamo, as decomposed text has them) is joined into the
+block first. The letters modern Korean dropped (ㆍ ㅿ ㆁ ㆆ) make no block, so a block with one is
+skipped like any script no front end reads (#132).
 
 Korean's three stops are all voiceless at the start of a word. The front end tells them apart by
 how long they aspirate (`vot`, voice onset time):
@@ -69,6 +78,9 @@ it, untried) and the stiff voice of tense stops. A Korean speaker's ear is still
 Han characters are read through a lexicon of character and phrase readings (MIT-licensed pinyin
 data, `tools/build-mandarin.ts`), longest phrase first: 银行 is yín háng, 行走 xíng zǒu. Then:
 
+- **Readings by context:** a character outside any phrase takes its first listed reading, except
+  where its neighbour decides: 长 after a degree word is the adjective (很长 hěn cháng, 太长 tài
+  cháng), while 长大 and 校长 keep zhǎng.
 - **Tone changes:** third-tone sandhi inside a phrase (你好 reads ní hǎo), and 不 and 一 before a
   fourth tone (不会 bú huì, 一个 yí gè).
 - **Aspiration said:** p t k q ch c are aspirated with Mandarin's longer aspiration (`vot` 90 ms),
@@ -87,6 +99,22 @@ data, `tools/build-mandarin.ts`), longest phrase first: 银行 is yín háng, �
 - **Rhymes close in one movement:** the off-glide of ai ei ao ou, and -n / -ng, are where the vowel
   ends up at the end of the note, not a part held after it (`closing`, below).
 - **Timing:** j zh z with short frication, n m f long enough to hear, -n 70 ms and -ng 80 ms.
+- **The voice on the beat:** each initial says how long the voice lags it (`voiceLag`: the 90 ms
+  aspiration, a 15-18 ms burst, a fricative's 27-34 ms release), and the song planner sings the
+  initial that much earlier. Against the 20 singers of M4Singer (Zhang et al., NeurIPS 2022
+  Datasets and Benchmarks; the synth singing their notes, 296 sentences) the voice came in 110 ms
+  after the beat behind an aspirated initial and 34-42 ms behind the others, where theirs is on
+  it; now 14-18 ms, `tests/voice_on_beat.rs`.
+- **Consonants shorten with the notes:** what comes before a sung vowel (the coda before it, the
+  initial and medial, the voice's lag) takes at most 55 % of the time since the vowel before
+  (`onsetShare`) and shortens in proportion on a faster note. M4Singer's singers' initials are a
+  share of that time at any tempo (the median 0.39-0.43, three quarters under 0.50-0.55; Zhang et
+  al., "M4Singer: A Multi-Style, Multi-Singer and Musical Score Provided Mandarin Singing
+  Corpus", NeurIPS 2022 Datasets and Benchmarks: only aggregate figures like these come from it).
+  At fixed lengths a fast note had no vowel left: 85 % of the vowels under 150 ms after an
+  aspirated initial were 12 dB or more under the singer's on the same 296 sentences; now none.
+  A song's first syllable shortens the same way to fit the time before its first beat, so the
+  plan never starts before its time 0 (窗 chuang from a beat at 0.3 s began 13 ms before it).
 - **Erhua:** 一点儿 sings 一 + 点儿, one syllable ending in ɻ; a 儿 that is a word's own syllable
   (女儿, 儿子) stays one.
 - **A vowel-initial syllable** (爱, 安) starts with a soft glottal catch, so it doesn't run into the
@@ -209,6 +237,14 @@ Every front end writes the same thing, one sung syllable per sounding note:
 - `pitch`: bends at the note's start, middle or end (below).
 - `nasalLead`: on a closing rhyme (`closing`), nasalise this fraction of the vowel before its
   nasal coda (unsaid: none).
+- `voiceLag`: how long after the onset's last consonant the voice starts (s): an aspiration, a
+  burst, a fricative's release. A song sings the consonants that much earlier, so the voice comes
+  in on the beat (before a medial glide the glide is that much longer at its start, and still
+  ends on the beat). Unsaid: the vowel's segment starts on the beat and the voice after it, as
+  every front end but Mandarin's is sung. Live notes ignore it.
+- `onsetShare`: in a song, what comes before this syllable's vowel takes at most this share of
+  the time since the vowel before, shortening in proportion. Unsaid: the consonants keep their
+  lengths.
 - `closing`: the rhyme's ending is one closing movement at the end of the note, this long at most
   (seconds; Mandarin says 0.2), instead of a part of its own. A falling off-glide then takes at
   most that long and at most 60% of the vowel, half of it the glide coming in and half the vowel
@@ -251,8 +287,9 @@ its listener chose the melody as written (above).
 2. **Write the front end**: implement `FrontEnd` (which characters start and continue its words,
    and word → syllables; `word_after` also gets the word before, for words that lean on each
    other, as a Russian preposition with no vowel does; `claims` lets it decline a word in a script
-   it shares), then add it to the one router list, `lyrics_to_syllables_with`, which the app, the
-   wasm engine and the CLI all read lyrics through. A front end that needs data loads it like the
+   it shares), then add it to the one router list, `lyrics_in`, which the app, the wasm engine and
+   the CLI all read lyrics through (a Latin-script language also joins `Lang`, the player's
+   choice). A front end that needs data loads it like the
    Mandarin lexicon: a gzipped file in `public/data/`, fetched only when the lyrics need it.
 3. **Say the phonology** in the syllables (aspiration and its length, pitch bends, consonant
    lengths, the nucleus). Build `Syllable` and
@@ -298,12 +335,17 @@ Treat about ±2 points as noise at these sizes (8 scrambles × 2 voices) and rea
 counts for the sounds a change targets, not just the total. One recogniser and one tune can't stand
 in for a native listener; the test says where to look and whether a change moved what it aimed at.
 
+**It is a screen for named confusions; the ear decides.** The recogniser and a native listener can
+disagree, and then the listener wins. #115 made Mandarin worse for the recogniser (scrambled 25.0 /
+27.8% → 37.8 / 39.7%, male / female) and better to a native speaker's ear, which preferred it in
+three of four comparisons.
+
 ## Not yet
 
-- **A language choice.** Routing by script can't tell Turkish or German from English, or Cantonese
-  and Japanese from Mandarin, so Latin text is English unless it is toned pinyin, and Han
-  characters are Mandarin. A per-song language setting (Auto by default, today's order) comes next,
-  built on the one front-end list (#40).
+- **More language choices.** Routing by script can't tell German from English, or Cantonese and
+  Japanese from Mandarin, so Latin text is English unless it is toned pinyin or Turkish is chosen,
+  and Han characters are Mandarin. Each new Latin-script language joins `Lang`, the one language
+  setting (#40).
 - **Bends on live notes:** a key pressed in Sing or a note from the plugin (`plan_note_on`) sings
   the note's pitch.
 - **Tones in speech:** Speak doesn't read Mandarin yet; the tones' contours and speech tuning come

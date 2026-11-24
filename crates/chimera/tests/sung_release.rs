@@ -116,6 +116,21 @@ fn an_internal_release_uses_the_gap_before_the_next_sound() {
 }
 
 #[test]
+fn internal_release_accounts_for_the_next_phrases_voice_lag() {
+    let first = SungNote { midi: 57.0, beats: 2.0, syl: Syllable { phrase_end: true, ..syl("l", "ɑ", &[]) } };
+    let mut next = SungNote { midi: 60.0, beats: 1.0, syl: syl("m", "ɑ", &[]) };
+    next.syl.onset[0].dur = Some(0.035);
+    let options = SongOptions { bpm: 120.0, t0: 0.3, ..Default::default() };
+    let unshifted = plan_song(&[first.clone(), next.clone()], &options);
+    assert_eq!(labelled(&unshifted, EXHALE_LABEL).len(), 2);
+
+    next.syl.voice_lag = Some(0.13);
+    let shifted = plan_song(&[first, next], &options);
+    assert!((unshifted.segments[2].t0 - shifted.segments[2].t0 - 0.13).abs() < 1e-9);
+    assert_eq!(labelled(&shifted, EXHALE_LABEL).len(), 1, "only the final release fits before the advanced onset");
+}
+
+#[test]
 fn a_barely_fitting_release_does_not_dip_the_preceding_vowel() {
     // The 30% reserve just covers the 60 ms opening offset and the next sung /l/.
     let boundary = (0.06 + 0.065 * 0.8) / 0.3;
